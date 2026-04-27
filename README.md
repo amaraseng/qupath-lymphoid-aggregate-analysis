@@ -9,8 +9,6 @@ Lymphoid aggregates are defined based on **lymphocyte populations only**, specif
 - CD3+ T cells
 - CD20+ B cells
 
-Plasma cells (CD138+ IRF4+) are **not included** in aggregate classification in this pipeline.
-
 ---
 
 ## Requirements
@@ -20,8 +18,6 @@ Plasma cells (CD138+ IRF4+) are **not included** in aggregate classification in 
 - Pre-trained cell classifiers for:
   - CD3+ cells
   - CD20+ cells
-  - (optional) CD138+ IRF4+ cells for downstream analysis
-
 ---
 
 ## Pipeline Scripts
@@ -33,7 +29,7 @@ Scripts are designed to be run sequentially:
   Sets fluorescence channels for analysis.
 
 - `002_Tissue_detect.groovy`  
-  Detects tissue regions to restrict downstream analysis.
+  Detects tissue regions to restrict downstream analysis. (Need to make a pixel classifier based on nuclear staining and name it Tissue_Detection prior to running script.)
 
 ---
 
@@ -43,13 +39,13 @@ Scripts are designed to be run sequentially:
   Performs cell segmentation.
 
 - `004_Cell_classify.groovy`  
-  Applies trained classifiers to identify CD3+, CD20+, and other cell types.
+  Applies trained classifiers to identify CD3+ and CD20+ cells.
 
 ---
 
 ### Tissue and Aggregate Detection
 - `005_Clean_up_Tissue.groovy`  
-  Refines tissue annotations and removes artifacts. (Manually select and classify as *Ignore.)
+  Refines tissue annotations and removes artifacts. (Manually select artifacts and classify as *Ignore prior to running.)
 
 - `006_Detect_Aggregates.groovy`  
   Identifies candidate lymphoid aggregates based on local lymphocyte density  
@@ -71,7 +67,7 @@ Scripts are designed to be run sequentially:
 
   Aggregates are categorized into:
   - Lymphoid Aggregates (B cell–containing aggregates)
-  - Other aggregate types as defined in the study
+  - Unclassified
 
 ---
 
@@ -105,14 +101,6 @@ Aggregate classification is restricted to **T cells and B cells**, reflecting ly
 - Aggregate counts per image
 - Aggregate classifications
 - Cell composition metrics
-
----
-
-## Citation
-
-If you use these scripts, please cite:
-
-> Seng et al. (2026). Rituximab treatment is associated with lower prevalence of lung B cells and lymphoid aggregates but not plasma cells in SARD-ILD.
 
 ---
 
