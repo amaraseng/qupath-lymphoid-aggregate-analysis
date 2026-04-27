@@ -1,0 +1,609 @@
+setChannelNames(
+     'CXCL13',
+     'Hoescht',
+     'CD138',
+     'CD3',
+)
+// QuPath 0.6.0
+// Apply pixel classifier "Tissue_Detection" within all existing annotations
+// Rename created Tissue annotation(s) to "Tissue"
+
+def classifierName = "Tissue_Detection"
+double minArea = 0.0
+double minHoleArea = 0.0
+def tissueClassName = "Tissue"
+def newAnnotationName = "Tissue"
+
+def annotations = getAnnotationObjects()
+
+if (annotations.isEmpty()) {
+    println "No annotations found."
+    return
+}
+
+println "Found ${annotations.size()} annotation(s)."
+selectObjects(annotations)
+
+// Create annotations from pixel classifier
+createAnnotationsFromPixelClassifier(classifierName, minArea, minHoleArea, "SELECT_NEW")
+
+// Rename newly created Tissue annotations
+def selectedAnnotations = getSelectedObjects().findAll { it.isAnnotation() }
+
+int renamed = 0
+selectedAnnotations.each { ann ->
+    def pathClass = ann.getPathClass()
+    if (pathClass != null && pathClass.getName() == tissueClassName) {
+        ann.setName(newAnnotationName)
+        renamed++
+    }
+}
+
+fireHierarchyUpdate()
+println "Done. Renamed ${renamed} annotation(s) to '${newAnnotationName}'."
+import qupath.lib.gui.scripting.QPEx
+
+// --------------------------------------------------
+// Refresh cell detection for the CURRENT image only
+// Compatible with QuPath 0.6.0
+// Can also be used with "Run for project"
+// Does NOT fill holes in Tissue
+// --------------------------------------------------
+
+// Get current image
+def imageData = getCurrentImageData()
+if (imageData == null) {
+    println "❌ No image open."
+    return
+}
+
+setImageType('FLUORESCENCE')
+
+def hierarchy = imageData.getHierarchy()
+def imageName = imageData.getServer().getMetadata().getName()
+
+println "📂 Processing image: ${imageName}"
+
+// Find "Tissue"
+def annotation1 = hierarchy.getAnnotationObjects().find { it.getName() == "Tissue" }
+if (annotation1 == null) {
+    println "⚠️ 'Tissue' not found in ${imageName} - skipping."
+    return
+}
+
+// Remove all existing detections
+def existingDetections = hierarchy.getDetectionObjects()
+if (!existingDetections.isEmpty()) {
+    hierarchy.removeObjects(existingDetections, true)
+    println "🧹 Removed ${existingDetections.size()} old detections"
+}
+
+// Select Tissue and run cell detection only inside it
+selectObjects(annotation1)
+runPlugin('qupath.imagej.detect.cells.WatershedCellDetection', '''
+{
+  "detectionImage": "Hoechst",
+  "requestedPixelSizeMicrons": 0.2,
+  "backgroundRadiusMicrons": 4.0,
+  "backgroundByReconstruction": true,
+  "medianRadiusMicrons": 0.0,
+  "sigmaMicrons": 1.0,
+  "minAreaMicrons": 2.0,
+  "maxAreaMicrons": 400.0,
+  "threshold": 45.0,
+  "watershedPostProcess": true,
+  "cellExpansionMicrons": 2.0,
+  "includeNuclei": true,
+  "smoothBoundaries": true,
+  "makeMeasurements": true
+}
+''')
+println "🔬 Re-ran cell detection in Tissue"
+
+// Save if image belongs to a project
+def projectEntry = getProjectEntry()
+if (projectEntry != null) {
+    projectEntry.saveImageData(imageData)
+    println "💾 Saved: ${imageName}"
+} else {
+    println "ℹ️ Image not in a project - results not auto-saved to project."
+}
+
+println "🎉 Done: ${imageName}"
+import qupath.lib.gui.scripting.QPEx
+
+// --------------------------------------------------
+// Run an object classifier on the CURRENT image only
+// Compatible with QuPath 0.6.0
+// Works with "Run for project"
+// --------------------------------------------------
+
+// -------- USER SETTING --------
+def classifierName = "CD3_CD20"
+// -----------------------------
+
+// Get current image
+def imageData = getCurrentImageData()
+if (imageData == null) {
+    println "❌ No image open."
+    return
+}
+
+setImageType('FLUORESCENCE')
+
+def hierarchy = imageData.getHierarchy()
+def annotations = hierarchy.getAnnotationObjects()
+def detections = hierarchy.getDetectionObjects()
+def imageName = imageData.getServer().getMetadata().getName()
+
+// Check annotations
+if (annotations.isEmpty()) {
+    println "⚠️ Skipping ${imageName}: no annotations found"
+    return
+}
+
+// Check detections
+if (detections.isEmpty()) {
+    println "⚠️ Skipping ${imageName}: no detections found to classify"
+    return
+}
+
+println "📂 Processing ${imageName} with ${annotations.size()} annotation(s) and ${detections.size()} detection(s)..."
+
+// Run classifier on all detections
+selectObjects(detections)
+println "🔲 Classifying ${detections.size()} detections with '${classifierName}'"
+
+runObjectClassifier(classifierName)
+
+// Save if part of a project
+def projectEntry = getProjectEntry()
+if (projectEntry != null) {
+    projectEntry.saveImageData(imageData)
+    println "💾 Saved: ${imageName}"
+} else {
+    println "ℹ️ Image not in a project - results not auto-saved to project."
+}
+
+println "🎉 Done: ${imageName}"
+import qupath.lib.roi.interfaces.ROI
+
+// =====================================================
+// Delete detections inside any Ignore* annotations
+// QuPath 0.6.0
+// Works on current image, and with Run for project
+// =====================================================
+
+// ---------------------
+// User settings
+// ---------------------
+def ignorePrefix = 'Ignore'   // matches Ignore, Ignore1, Ignore_debris, etc.
+// ---------------------
+
+def imageData = getCurrentImageData()
+if (imageData == null) {
+    println "❌ No image open."
+    return
+}
+
+def hierarchy = imageData.getHierarchy()
+def imageName = imageData.getServer().getMetadata().getName()
+
+def ignoreAnnotations = hierarchy.getAnnotationObjects().findAll {
+    def pc = it.getPathClass()
+    pc != null && pc.getName() != null && pc.getName().startsWith(ignorePrefix)
+}
+
+def detections = hierarchy.getDetectionObjects()
+
+println "📂 Processing image: ${imageName}"
+println "Found ${ignoreAnnotations.size()} Ignore* annotation(s)"
+println "Found ${detections.size()} detection(s)"
+
+if (ignoreAnnotations.isEmpty()) {
+    println "⚠️ No Ignore* annotations found. Nothing to do."
+    return
+}
+
+if (detections.isEmpty()) {
+    println "⚠️ No detections found. Nothing to do."
+    return
+}
+
+// Store Ignore ROIs
+def ignoreROIs = ignoreAnnotations.collect { it.getROI() }.findAll { it != null && !it.isEmpty() }
+
+if (ignoreROIs.isEmpty()) {
+    println "⚠️ Ignore ROIs are empty. Nothing to do."
+    return
+}
+
+def detectionsToDelete = []
+int checked = 0
+
+for (det in detections) {
+    def roi = det.getROI()
+    if (roi == null)
+        continue
+
+    double cx = roi.getCentroidX()
+    double cy = roi.getCentroidY()
+    int z = roi.getZ()
+    int t = roi.getT()
+
+    boolean insideIgnore = false
+    for (ROI ignoreROI in ignoreROIs) {
+        if (ignoreROI.getZ() == z && ignoreROI.getT() == t && ignoreROI.contains(cx, cy)) {
+            insideIgnore = true
+            break
+        }
+    }
+
+    if (insideIgnore)
+        detectionsToDelete << det
+
+    checked++
+    if (checked % 200000 == 0)
+        println "Checked ${checked} detections..."
+}
+
+println "Deleting ${detectionsToDelete.size()} detection(s) inside Ignore* annotations..."
+
+if (!detectionsToDelete.isEmpty()) {
+    hierarchy.removeObjects(detectionsToDelete, true)
+}
+
+fireHierarchyUpdate()
+
+def projectEntry = getProjectEntry()
+if (projectEntry != null) {
+    projectEntry.saveImageData(imageData)
+    println "💾 Saved: ${imageName}"
+}
+
+println "✅ Done."
+import qupath.lib.objects.PathObjects
+import qupath.lib.objects.classes.PathClass
+import qupath.lib.roi.ROIs
+import qupath.lib.regions.ImagePlane
+
+def imageData = getCurrentImageData()
+def server = imageData.getServer()
+def cal = server.getPixelCalibration()
+
+double pxW = cal.getPixelWidthMicrons()
+double pxH = cal.getPixelHeightMicrons()
+
+// -------- Parameters --------
+double tileSizeUm = 40.0
+int minAggCells = 12
+// ----------------------------
+
+double tileW = tileSizeUm / pxW
+double tileH = tileSizeUm / pxH
+
+def plane = ImagePlane.getDefaultPlane()
+def aggClass = PathClass.fromString("Aggregate")
+
+int imgW = server.getWidth()
+int imgH = server.getHeight()
+
+int nTilesX = Math.ceil(imgW / tileW) as int
+int nTilesY = Math.ceil(imgH / tileH) as int
+
+// Delete old Aggregate annotations first
+def oldAggs = getAnnotationObjects().findAll {
+    it.getPathClass()?.getName() == "Aggregate"
+}
+if (!oldAggs.isEmpty()) {
+    removeObjects(oldAggs, true)
+}
+
+// Map tile index → cell count
+def tileCounts = [:].withDefault { 0 }
+
+// Collect only CD3/CD20 cells once
+def lymphs = getCellObjects().findAll {
+    it.getPathClass()?.getName() in ["CD3", "CD20"]
+}
+
+if (lymphs.isEmpty()) {
+    print "⚠️ No CD3/CD20 lymphocytes found"
+    return
+}
+
+// Assign each cell to its tile
+lymphs.each { cell ->
+    def roi = cell.getROI()
+    int tx = (roi.getCentroidX() / tileW) as int
+    int ty = (roi.getCentroidY() / tileH) as int
+
+    if (tx >= 0 && tx < nTilesX && ty >= 0 && ty < nTilesY) {
+        tileCounts["${tx}_${ty}"]++
+    }
+}
+
+// Create aggregate tiles
+def tiles = []
+
+tileCounts.each { key, count ->
+    if (count >= minAggCells) {
+        def parts = key.split("_")
+        int tx = parts[0] as int
+        int ty = parts[1] as int
+
+        double x = tx * tileW
+        double y = ty * tileH
+
+        def roi = ROIs.createRectangleROI(x, y, tileW, tileH, plane)
+        tiles << PathObjects.createAnnotationObject(roi, aggClass)
+    }
+}
+
+addObjects(tiles)
+
+print "✅ Fast aggregate tile detection complete"
+print "Old Aggregate annotations removed: ${oldAggs.size()}"
+print "Aggregate tiles detected: ${tiles.size()}"
+import qupath.lib.objects.PathObjects
+import qupath.lib.objects.classes.PathClass
+import qupath.lib.roi.ROIs
+import qupath.lib.roi.RoiTools
+import qupath.lib.regions.ImagePlane
+import qupath.lib.roi.interfaces.ROI
+
+def plane = ImagePlane.getDefaultPlane()
+def aggClass = PathClass.fromString("Aggregate")
+
+// Tolerance in pixels for edge alignment
+double eps = 1.0
+
+// Get Aggregate tiles
+def tiles = getAnnotationObjects().findAll {
+    it.getPathClass()?.getName() == "Aggregate"
+}
+
+if (tiles.isEmpty()) {
+    print "⚠️ No Aggregate tiles found to merge"
+    return
+}
+
+// --- Edge-touch only test (NO corner-only merges) ---
+boolean touch(r1, r2, eps) {
+
+    double x1 = r1.getBoundsX()
+    double y1 = r1.getBoundsY()
+    double x2 = x1 + r1.getBoundsWidth()
+    double y2 = y1 + r1.getBoundsHeight()
+
+    double a1 = r2.getBoundsX()
+    double b1 = r2.getBoundsY()
+    double a2 = a1 + r2.getBoundsWidth()
+    double b2 = b1 + r2.getBoundsHeight()
+
+    // Overlap lengths
+    double xOverlap = Math.min(x2, a2) - Math.max(x1, a1)
+    double yOverlap = Math.min(y2, b2) - Math.max(y1, b1)
+
+    // Horizontal edge touch (top/bottom)
+    boolean horizontalTouch =
+        (Math.abs(y2 - b1) <= eps || Math.abs(b2 - y1) <= eps) &&
+        xOverlap > eps
+
+    // Vertical edge touch (left/right)
+    boolean verticalTouch =
+        (Math.abs(x2 - a1) <= eps || Math.abs(a2 - x1) <= eps) &&
+        yOverlap > eps
+
+    return horizontalTouch || verticalTouch
+}
+
+def remaining = new ArrayList<>(tiles)
+def merged = []
+
+while (!remaining.isEmpty()) {
+
+    def cluster = [remaining.remove(0)]
+    boolean added
+
+    do {
+        added = false
+        def toAdd = []
+
+        remaining.each { r ->
+            if (cluster.any { c -> touch(c.getROI(), r.getROI(), eps) }) {
+                toAdd << r
+                added = true
+            }
+        }
+
+        remaining.removeAll(toAdd)
+        cluster.addAll(toAdd)
+
+    } while (added)
+
+    // ---- Polygon union of cluster ----
+    ROI unionROI = cluster[0].getROI()
+    for (int i = 1; i < cluster.size(); i++) {
+        unionROI = RoiTools.union(unionROI, cluster[i].getROI())
+    }
+
+    def ann = PathObjects.createAnnotationObject(unionROI, aggClass)
+    ann.setName("Aggregate")
+    merged << ann
+}
+
+// Replace tiles with merged polygon aggregates
+removeObjects(tiles, false)
+addObjects(merged)
+
+fireHierarchyUpdate()
+
+print "✅ Polygon-union Aggregate merge complete"
+print "Merged aggregates: ${merged.size()}"
+
+// Save project changes
+def project = getProject()
+if (project != null) {
+    project.syncChanges()
+    print "💾 Project saved"
+}
+
+import qupath.lib.objects.classes.PathClass
+
+// Minimum TLS area from literature
+double minAreaUm2 = 6245.0
+
+def imageData = getCurrentImageData()
+def server = imageData.getServer()
+def cal = server.getPixelCalibration()
+
+double pxW = cal.getPixelWidthMicrons()
+double pxH = cal.getPixelHeightMicrons()
+
+// Get all Aggregate annotations
+def aggs = getAnnotationObjects().findAll {
+    it.getPathClass()?.getName() == "Aggregate"
+}
+
+if (aggs.isEmpty()) {
+    print "⚠️ No Aggregate annotations found"
+    return
+}
+
+def toRemove = []
+
+aggs.each { ann ->
+    def roi = ann.getROI()
+    double areaUm2 = roi.getScaledArea(pxW, pxH)
+
+    if (areaUm2 < minAreaUm2) {
+        toRemove << ann
+    }
+}
+
+if (!toRemove.isEmpty()) {
+    removeObjects(toRemove, true)
+}
+
+print "Aggregate annotations checked: ${aggs.size()}"
+print "Removed aggregates < ${minAreaUm2} µm²: ${toRemove.size()}"
+import qupath.lib.objects.classes.PathClass
+
+def imageData = getCurrentImageData()
+def server = imageData.getServer()
+def cal = server.getPixelCalibration()
+
+double pxW = cal.getPixelWidthMicrons()
+double pxH = cal.getPixelHeightMicrons()
+
+// Parameters for Lymphoid Aggregate classification
+double minCD20FracOverall = 0.10
+
+// Classes
+def lymphoidAggClass = PathClass.fromString("Lymphoid Aggregate")
+def aggClass = PathClass.fromString("Unclassified Aggregate")
+
+// Pre-filter cells once: CD3/CD20 lymphocytes only
+def lymphocyteCells = getCellObjects().findAll {
+    def cls = it.getPathClass()?.getName()
+    cls == "CD3" || cls == "CD20"
+}
+
+// Apply classification to all annotations
+def annotations = getAnnotationObjects()
+
+annotations.each { ann ->
+
+    def roi = ann.getROI()
+
+    double bx = roi.getBoundsX()
+    double by = roi.getBoundsY()
+    double bw = roi.getBoundsWidth()
+    double bh = roi.getBoundsHeight()
+
+    int lymphocyteCount = 0
+    int cd20Count = 0
+
+    for (cell in lymphocyteCells) {
+        def cellROI = cell.getROI()
+        double x = cellROI.getCentroidX()
+        double y = cellROI.getCentroidY()
+
+        // Fast reject by bounding box
+        if (x < bx || x > bx + bw || y < by || y > by + bh)
+            continue
+
+        if (!roi.contains(x, y))
+            continue
+
+        lymphocyteCount++
+
+        if (cell.getPathClass()?.getName() == "CD20")
+            cd20Count++
+    }
+
+    // Lymphoid Aggregate criteria
+    if (lymphocyteCount > 0 &&
+        (cd20Count / (double) lymphocyteCount) >= minCD20FracOverall) {
+        ann.setPathClass(lymphoidAggClass)
+    } else {
+        ann.setPathClass(aggClass)
+    }
+}
+
+// Summary
+int lymphoidAggN = annotations.count { it.getPathClass()?.getName() == "Lymphoid Aggregate" }
+int aggN = annotations.count { it.getPathClass()?.getName() == "Unclassified Aggregate" }
+
+print "✅ Lymphoid aggregate classification complete"
+print "Lymphoid Aggregate: ${lymphoidAggN}"
+print "Unclassified Aggregate: ${aggN}"
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.io.File
+
+def project = getProject()
+if (project == null) {
+    println "No project found."
+    return
+}
+
+def dateString = new SimpleDateFormat("yyyy-MM-dd").format(new Date())
+
+// Fix for QuPath returning a Path rather than a String
+def projectDir = project.getPath().toAbsolutePath().toFile().getParentFile()
+
+def resultsDir = new File(projectDir, "Results")
+if (!resultsDir.exists())
+    resultsDir.mkdirs()
+
+def outFile = new File(resultsDir, "Annotation_Counts_${dateString}.csv")
+def targetClasses = ["Lymphoid Aggregate"] as Set
+
+outFile.withWriter("UTF-8") { writer ->
+    writer.writeLine("Image,Classification,Count")
+
+    for (entry in project.getImageList()) {
+        def imageData = entry.readImageData()
+        def imageName = imageData.getServer().getMetadata().getName()
+
+        def counts = [
+            "Lymphoid Aggregate": 0
+        ]
+
+        imageData.getHierarchy().getAnnotationObjects().each { ann ->
+            def name = ann.getPathClass()?.getName()
+            if (name != null && targetClasses.contains(name)) {
+                counts[name]++
+            }
+        }
+
+        writer.writeLine("\"${imageName}\",Lymphoid Aggregate,${counts['Lymphoid Aggregate']}")
+
+        imageData.close()
+        println "Processed: ${imageName}"
+    }
+}
+
+println "Done: " + outFile.getAbsolutePath()
